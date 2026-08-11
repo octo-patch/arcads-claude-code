@@ -51,17 +51,11 @@ while :; do
     [[ "${SLOT_DONE[$i]}" == "1" ]] && continue
     slot="${SLOT_NAMES[$i]}"
     id="${SLOT_IDS[$i]}"
-    resp=$(curl -sS -G -H "$AUTH_HDR" --data-urlencode "task_id=$id" "$API_ROOT/v1/query/video_generation")
-    status=$(echo "$resp" | jq -r '.status // .task.status // "?"')
+    resp=$(curl -sS -H "$AUTH_HDR" "$API_ROOT/v2/query/video_generation/$id")
+    status=$(echo "$resp" | jq -r '.task.status // "?"')
     echo "  [$slot] $id status=$status"
     if [[ "${status,,}" == "success" ]]; then
-      file_id=$(echo "$resp" | jq -r '.file_id // .task.file_id // empty')
-      url=$(echo "$resp" | jq -r '.task.content.url // .content.url // empty')
-      if [[ -z "$url" && -n "$file_id" ]]; then
-        file_resp=$(curl -sS -G -H "$AUTH_HDR" --data-urlencode "file_id=$file_id" "$API_ROOT/v1/files/retrieve")
-        echo "$file_resp" > "$OUT_DIR/_resp/$slot.file.json"
-        url=$(echo "$file_resp" | jq -r '.file.download_url // .download_url // empty')
-      fi
+      url=$(echo "$resp" | jq -r '.task.content.url // empty')
       if [[ -n "$url" ]]; then
         ext="${url##*.}"; ext="${ext%%\?*}"
         [[ -z "$ext" || ${#ext} -gt 5 ]] && ext="mp4"
@@ -72,7 +66,7 @@ while :; do
       echo "$resp" > "$OUT_DIR/_resp/$slot.json"
       SLOT_DONE[$i]=1
     elif [[ "${status,,}" == "fail" ]]; then
-      err=$(echo "$resp" | jq -r '.base_resp.status_msg // .error.message // "(no message)"')
+      err=$(echo "$resp" | jq -r '.task.error.message // .task.error // "(no message)"')
       echo "    !! FAILED: $err"
       echo "$resp" > "$OUT_DIR/_resp/$slot.json"
       SLOT_DONE[$i]=1
