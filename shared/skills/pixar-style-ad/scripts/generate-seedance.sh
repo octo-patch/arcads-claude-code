@@ -61,12 +61,12 @@ to_image_url() {
     return 1
   fi
   local mime="image/png"
-  case "${source,,}" in
-    *.jpg|*.jpeg) mime="image/jpeg" ;;
-    *.png) mime="image/png" ;;
-    *.webp) mime="image/webp" ;;
-    *.heic) mime="image/heic" ;;
-    *.heif) mime="image/heif" ;;
+  case "$source" in
+    *.jpg|*.jpeg|*.JPG|*.JPEG) mime="image/jpeg" ;;
+    *.png|*.PNG) mime="image/png" ;;
+    *.webp|*.WEBP) mime="image/webp" ;;
+    *.heic|*.HEIC) mime="image/heic" ;;
+    *.heif|*.HEIF) mime="image/heif" ;;
   esac
   local encoded
   encoded="$(base64 < "$source" | tr -d '\n')"
@@ -88,12 +88,13 @@ post_one() {
   echo "$resp" > "$OUT_DIR/$slot.json"
   local id; id=$(echo "$resp" | jq -r '.task_id // .id // empty')
   local status; status=$(echo "$resp" | jq -r '.status // .task.status // empty')
-  local err; err=$(echo "$resp" | jq -r '.error.message // .message // empty')
-  if [[ -n "$err" ]]; then
+  local err; err=$(echo "$resp" | jq -r '.error.message // .message // .base_resp.status_msg // empty')
+  if [[ -n "$err" || -z "$id" ]]; then
+    [[ -n "$err" ]] || err="response did not include task_id"
     echo "[$slot] task_id=$id status=$status error=$err" >&2
-  else
-    echo "[$slot] task_id=$id status=$status dur=${duration}s"
+    return 1
   fi
+  echo "[$slot] task_id=$id status=$status dur=${duration}s"
 }
 
 export -f post_one lookup_startframe to_image_url
@@ -111,4 +112,4 @@ while IFS=$'\n' read -r line; do
 done
 for pid in "${PIDS[@]}"; do wait "$pid"; done
 
-echo "=== Issued ${#PIDS[@]} MiniMax jobs. Poll with poll-and-download.sh. ==="
+echo "=== Issued ${#PIDS[@]} MiniMax jobs. Poll with poll-minimax-and-download.sh. ==="

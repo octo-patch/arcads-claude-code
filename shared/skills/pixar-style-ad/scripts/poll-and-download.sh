@@ -1,30 +1,15 @@
 #!/bin/bash
-# Poll MiniMax task IDs until they succeed or fail, then download the file.
-# Usage: ./poll-and-download.sh <out-subdir> <slot1>=<task_id1> <slot2>=<task_id2> ...
-# Example: ./poll-and-download.sh clips batch-a=176843862716480 brent=176843862716481
+# Poll Arcads asset IDs until all are 'generated' or 'failed', then download.
+# Usage: ./poll-and-download.sh <out-subdir> <slot1>=<id1> <slot2>=<id2> ...
+# Example: ./poll-and-download.sh stills/batch-a pain-cpm=abc123 brent=def456
 #
-# Outputs land in $RUN_DIR/<out-subdir>/<slot>.{mp4|bin}
+# Outputs land in $RUN_DIR/<out-subdir>/<slot>.{png|mp4}
 set -euo pipefail
 
 set -a; source "${ENV_FILE:-$RUN_DIR/.env}" 2>/dev/null || source "$(git rev-parse --show-toplevel 2>/dev/null)/workspace/.env"; set +a
 
-if [[ -z "${MINIMAX_API_KEY:-}" ]]; then
-  echo "MINIMAX_API_KEY is required" >&2
-  exit 1
-fi
-
-MINIMAX_REGION="${MINIMAX_REGION:-global_en}"
-case "${MINIMAX_BASE_URL:-}" in
-  "") case "$MINIMAX_REGION" in
-    global_en) API_ROOT="https://api.minimax.io" ;;
-    cn_zh) API_ROOT="https://api.minimaxi.com" ;;
-    *) echo "unknown MINIMAX_REGION: $MINIMAX_REGION" >&2; exit 1 ;;
-  esac ;;
-  *) API_ROOT="${MINIMAX_BASE_URL%/}" ;;
-esac
-API_ROOT="${API_ROOT%/v1}"
-API_ROOT="${API_ROOT%/v2}"
-AUTH_HDR="Authorization: Bearer $MINIMAX_API_KEY"
+BASE="${ARCADS_BASE_URL:-https://external-api.arcads.ai}"
+AUTH_HDR="Authorization: ${ARCADS_BASIC_AUTH:-Basic $(printf '%s:' "$ARCADS_API_KEY" | base64)}"
 
 SUBDIR="$1"; shift
 OUT_DIR="$RUN_DIR/$SUBDIR"
@@ -40,7 +25,7 @@ for kv in "$@"; do
 done
 
 iter=0
-MAX_ITERS="${MAX_ITERS:-90}"
+MAX_ITERS="${MAX_ITERS:-90}"     # 90 x 15s = 22.5 min
 POLL_INTERVAL="${POLL_INTERVAL:-15}"
 
 while :; do
@@ -51,24 +36,23 @@ while :; do
     [[ "${SLOT_DONE[$i]}" == "1" ]] && continue
     slot="${SLOT_NAMES[$i]}"
     id="${SLOT_IDS[$i]}"
-    resp=$(curl -sS -H "$AUTH_HDR" "$API_ROOT/v2/query/video_generation/$id")
-    status=$(echo "$resp" | jq -r '.task.status // "?"')
+    resp=$(curl -sS -H "$AUTH_HDR" "$BASE/v1/assets/$id")
+    status=$(echo "$resp" | jq -r '.status // "?"')
     echo "  [$slot] $id status=$status"
-    if [[ "${status,,}" == "success" ]]; then
-      url=$(echo "$resp" | jq -r '.task.content.url // empty')
+    if [[ "$status" == "generated" ]]; then
+      url=$(echo "$resp" | jq -r '.url // .data.url // empty')
       if [[ -n "$url" ]]; then
         ext="${url##*.}"; ext="${ext%%\?*}"
-        [[ -z "$ext" || ${#ext} -gt 5 ]] && ext="mp4"
+        [[ -z "$ext" || ${#ext} -gt 5 ]] && ext="bin"
         out="$OUT_DIR/$slot.$ext"
         echo "    -> downloading"
         curl -sS -L "$url" -o "$out"
+        echo "$resp" > "$OUT_DIR/_resp/$slot.json"
       fi
-      echo "$resp" > "$OUT_DIR/_resp/$slot.json"
       SLOT_DONE[$i]=1
-    elif [[ "${status,,}" == "fail" ]]; then
-      err=$(echo "$resp" | jq -r '.task.error.message // .task.error // "(no message)"')
+    elif [[ "$status" == "failed" ]]; then
+      err=$(echo "$resp" | jq -r '.data.error.message // .errorMessage // "(no message)"')
       echo "    !! FAILED: $err"
-      echo "$resp" > "$OUT_DIR/_resp/$slot.json"
       SLOT_DONE[$i]=1
     else
       pending=$((pending+1))
